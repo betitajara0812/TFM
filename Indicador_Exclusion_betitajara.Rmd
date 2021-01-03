@@ -1,0 +1,1933 @@
+---
+fontsize: 18pt
+title: 'Indicador Social en la niñez Colombiana usando Machine Learning'
+author: "Beatriz Elena Jaramillo Gallego"
+date: "20/12/2020"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+  html_notebook:
+    toc: yes
+---
+
+```{r, echo=FALSE}
+htmltools::img(src = knitr::image_uri("indicador.jpg"), 
+               alt = 'logo', 
+               style = 'position:absolute; top:0; right:0; padding:10px; ')
+```
+
+```{r libraries setup, include=FALSE}
+# Cargando Paquetes
+library(ggplot2) # visualización
+library(readr) 
+system("ls ../input")
+library(tidyverse)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(caret)
+library(haven)
+library(foreign)
+library(printr)
+library(DT)
+library(statar)
+library(RStata)
+library(gmodels)
+library(sjlabelled)
+library(rio)
+library(data.table)
+library(questionr)
+library(survey)
+# Load function
+source("http://pcwww.liv.ac.uk/~william/R/crosstab.r")
+library(caTools)
+library(rpart)
+library(rpart.plot)
+library(skimr)
+library(ggpubr)
+library(univariateML)
+library(GGally)
+library(doParallel)
+library(parallel)
+library(modelgrid)
+library(C50)
+library(factoextra)
+library(kableExtra)
+library(randomForest)
+```
+
+# 1. Data Set (ENCV-2018)
+
+Está parte del proyecto fue desarrollada en Stata.
+
+La Encuesta de Calidad de Vida (ECV) es una investigación que el DANE (Departamento Administrativo Nacional de Estadística) realiza con el objeto de recoger información sobre diferentes aspectos y dimensiones del bienestar y las condiciones de vida de los hogares, incluyendo temas como: el acceso a bienes y servicios públicos, privados o comunales, salud, educación, atención integral de niños y niñas menores de 5 años, entre otros. (https://www.dane.gov.co/index.php/estadisticas-por-tema/salud/calidad-de-vida-ecv/encuesta-nacional-de-calidad-de-vida-ecv-2018)
+
+```{r data_set, include=FALSE}
+# 
+# **************************************************************************************************
+# *					 VARIABLES INDICADOR SOCIAL -- MASTER DATA SCIENCE UOC
+# **************************************************************************************************
+# use "C:\Users\Nuestro PC\Desktop\TFM UOC\TFM\ENCV_2018.dta", clear
+# 
+# ** Set up survey
+# ***INSTALAR ssc install polychoric
+# *http://web.missouri.edu/~kolenikovs/stata/polychoric.hlp:
+# *---------------------------------------------------------------------------------------------
+# *help for polychoric and polychoricpca                                  author: Stas Kolenikov
+# ---------------------------------------------------------------------------------------------
+# gen Zona=CLASE
+# lab define Zona 1 "Urbano" 2 "Rural" 
+# label values Zona Zona
+# 
+# **ESCOGIENDO LAS VARIABLES Y PREPOCESAMIENTO INICIAL...
+# ** Solo dejo personas menores de 5 años
+# drop if P6040>5
+# 
+# **IDENTIDAD
+# *Registro Civil ¿Tiene registro civil de nacimiento? aplica para niños < 1 año	
+# gen Registro_civil=.
+# replace Registro_civil=1 if (P1894==1 | P1894==4 )
+# replace Registro_civil=2 if (P1894==5)
+# *replace Registro_civil =2 if (Registro_civil==.)
+# label define Registro_civil 1 "Si" 2 "No"
+# label values Registro_civil Registro_civil
+# label var Registro_civil "Registro Civil"
+# 
+# **************************************************************************************************
+# *BIENESTAR MATERIAL
+# 
+# *Seguridad Alimentaria
+# rename P8706 seg_alim
+# 
+# *Pobreza subjetiva
+# rename P5230 pobreza
+# 
+# *Ingresos Familiares
+# rename P9090 ingresos_flia
+# 
+# *Hacinamiento*
+# gen PerxHab=.
+# replace PerxHab=(CANT_PERSONAS_HOGAR/P5010)
+# sum PerxHab
+# 
+# gen hacinnomiti=.
+# replace hacinnomiti = 1 if (PerxHab>=5)
+# replace hacinnomiti = 2 if (PerxHab<5)
+# lab define hacinnomiti 1 "Con hacinamiento" 2 "Sin Hacinamiento" 
+# label values hacinnomiti hacinnomiti
+# lab var hacinnomiti "Hacinamiento"
+# 
+# *Condiciones de la vivienda
+# * P8530: El agua para preparar los alimentos, la obtienen principalmente de: 1 Acueducto pblico 2 Acueducto comunal o veredal 3 Pozo con bomba
+# *                      4 Pozo sin bomba, jagey 5 Agua lluvia 6 Ro, quebrada, manantial o nacimiento 7 Pila pblica 8 Carro tanque 9 Aguatero 10 Agua embotellada o en bolsa
+# gen agua=.
+# replace agua= 5 if (P8530==1|P8530==2|P8530==7)
+# replace agua= 4 if (P8530==3|P8530==4)
+# replace agua= 3 if (P8530==6)
+# replace agua= 2 if (P8530==5)
+# replace agua= 1 if (P8530==8|P8530==9|P8530==10)
+# lab define agua 1 "carrotanque/aguatero/embotellada"  2 "agua lluvia" 3"rio/quebrada/manantial" 4 "pozo" 5 "acueducto/pila"
+# lab values agua agua
+# lab var agua "fuente de agua potable"
+# 
+# * P8526: Con qu tipo de servicio sanitario cuenta el hogar? 1 Inodoro conectado a alcantarillado 2 Inodoro conectado a pozo sptico 3 Inodoro sin conexin 4 Letrina
+# gen sanitario=.
+# replace sanitario= 1 if (P8526==6)
+# replace sanitario= 2 if (P8526==4 | P8526==5)
+# replace sanitario= 3 if (P8526==1 | P8526==2| P8526==3)
+# lab define sanitario 1 "no tiene servicio sanitario" 2 "letrina/bajamar"  3 "inodoro conectado" 
+# lab values sanitario sanitario
+# lab var sanitario "tipo de instalacion sanitaria"
+# 
+# * P4015: Material predominante de los pisos 1. Alfombra o tapete de pared a pared 2. Madera pulida y lacada, parqu 3. Mrmol 4. Baldosa, vinilo, tableta, ladrillo 
+# *        5. Madera burda, tabla,tabln, otro vegetal 6. Cemento, gravilla 7. Tierra, arena
+# gen piso=. 
+# replace piso = 1 if (P4015==7)
+# replace piso = 2 if (P4015==2)
+# replace piso = 3 if (P4015==6)
+# replace piso = 4 if (P4015==1|P4015==3|P4015==4|P4015==5)
+# lab define piso 1 "tierra/arena" 2 "madera" 3 "cemento/gravilla" 4 "alfombra/marmol/baldosa/vinilo/tableta"
+# lab values piso piso 
+# lab var piso "material del suelo vivienda"
+# 
+# * P4005: Material predominante de las paredes exteriores 1 Bloque, ladrillo, piedra, madera pulida 2 Tapia pisada, adobe 3 Bahareque revocado 4 Bahareque sin revocar 
+# *        5 Madera burda, tabla, tabln 6 Material prefabricado 7 Guadua, caa, esterilla, otro vegetal 8 Zinc,tela, carbn, latas, desechos, plstico 9 Sin paredes
+# gen pared=.
+# replace pared=1 if (P4005==2|P4005==3|P4005==4|P4005==7)
+# replace pared=2 if (P4005==5|P4005==8)
+# replace pared=3 if (P4005==1|P4005==6|P4005==9)
+# lab define pared 1 "natural" 2 "rudimentario" 3 "bloque/ladrillo/madera pulida"
+# lab values pared pared
+# lab var pared "material de la pared"
+# 
+# * P8520S1: Con cuales de los siguientes servicios publicos, privados o comunales cuenta la vivienda? 1. Energia electrica 1 Si 2 No
+# gen elect = 0 
+# replace elect = 1 if (P8520S1==1)
+# replace elect = . if missing(P8520S1)
+# lab define elect 1 "si" 0 "no"
+# lab values elect elect 
+# lab var elect "tiene electricidad"
+# 
+# *BIENES DE CONSUMO DURADEROS **
+#            
+# * P1077S7: Cuales De Los Siguientes Bienes Posee Este Hogar? 8. Tv a color convencional 1 Si 2 No
+# gen Tv_color_conv = 0 
+# replace Tv_color_conv = 1 if (P1077S7==1)
+# replace Tv_color_conv = . if missing(P1077S7)
+# lab define Tv_color_conv 1 "si" 0 "no"
+# lab values Tv_color_conv Tv_color_conv 
+# lab var Tv_color_conv "tiene television"
+# 
+# *P1077S8: Cuales De Los Siguientes Bienes Posee Este Hogar? 9. Tv LCD, plasma o LED 1 Si 2 No
+# gen Tv_LCD_plasma_LED = 0 
+# replace Tv_LCD_plasma_LED = 1 if (P1077S8==1)
+# replace Tv_LCD_plasma_LED = . if missing(P1077S8)
+# lab define Tv_LCD_plasma_LED 1 "si" 0 "no"
+# lab values Tv_LCD_plasma_LED Tv_LCD_plasma_LED 
+# lab var Tv_LCD_plasma_LED "tiene television"
+# 
+# * P1077S2: Cuales De Los Siguientes Bienes Posee Este Hogar? 1. Nevera o refrigerador 1 Si 2 No
+# gen refri = 0 
+# replace refri = 1 if (P1077S2==1)
+# replace refri = . if missing(P1077S2)
+# lab define refri 1 "si" 0 "no"
+# lab values refri refri 
+# lab var refri "tiene refrigerador"
+# 
+# * P1077S16: Cuales De Los Siguientes Bienes Posee Este Hogar? 17. Moto o motoneta 1 Si 2 No
+# gen moto = 0 
+# replace moto = 1 if (P1077S16==1)
+# replace moto = . if missing(P1077S16)
+# lab define moto 1 "si" 0 "no"
+# lab values moto moto 
+# lab var moto "tiene moto"
+# 
+# * P1077S15: Cuales De Los Siguientes Bienes Posee Este Hogar? 16. Carro particular 1 Si 2 No
+# gen carro = 0 
+# replace carro = 1 if (P1077S15==1)
+# replace carro = . if missing(P1077S15)
+# lab define carro 1 "si" 0 "no"
+# lab values carro carro 
+# lab var carro "tiene carro" 
+# 
+# * P1077S17: Cuales De Los Siguientes Bienes Posee Este Hogar? 18. Bicicleta 1 Si 2 No
+# gen bici = 0 
+# replace bici = 1 if (P1077S17==1)
+# replace bici = . if missing(P1077S17)
+# lab define bici 1 "si" 0 "no"
+# lab values bici bici  
+# lab var bici "tiene bicicleta" 
+# 
+# * P1077S21: Cuales De Los Siguientes Bienes Posee Este Hogar? 22. Computador de escritorio 1 S 2 No
+# gen pc_escr = 0 
+# replace pc_escr = 1 if (P1077S21==1)
+# replace pc_escr = . if missing(P1077S21)
+# lab define pc_escr 1 "si" 0 "no"
+# lab values pc_escr pc_escr   
+# lab var pc_escr "tiene computador" 
+# 
+# * P1077S22: Cuales De Los Siguientes Bienes Posee Este Hogar? 23. Computador porttil 1 S 2 No
+# gen pc_port = 0 
+# replace pc_port = 1 if (P1077S22==1)
+# replace pc_port = . if missing(P1077S22)
+# lab define pc_port 1 "si" 0 "no"
+# lab values pc_port pc_port   
+# lab var pc_port "tiene computador" 
+# 
+# * P1077S13: Cuales De Los Siguientes Bienes Posee Este Hogar? 14. Reproductores digitales de msica, video e imagen (MP3, MP4, Ipod) 1 Si 2 No 
+# gen repro = 0 
+# replace repro = 1 if (P1077S13==1)
+# replace repro = . if missing(P1077S13)
+# lab define repro 1 "si" 0 "no"
+# lab values repro repro 
+# lab var repro "tiene reproductor de musica" 
+# 
+# sum agua sanitario piso pared elect Tv_color_conv Tv_LCD_plasma_LED refri moto carro bici pc_escr pc_port repro
+# polychoricpca agua sanitario piso pared elect Tv_color_conv Tv_LCD_plasma_LED refri moto carro bici pc_escr pc_port repro, score(encv) nscore(1)
+# 
+# ** QUINTILES
+# xtile quintil=encv, nq(5)
+# 
+# lab define quintil 1 "Muy pobre" 2 "Pobre" 3 "Riqueza Media" 4 "Rico" 5 "Muy rico"
+# label values quintil quintil
+# lab var quintil "Quintil"
+# 
+# *Descriptivas por departamento
+# tab quintil
+# tab DPTO quintil, row
+# * frequency row percentage
+# 
+# **************************************************************************************************
+# *SALUD
+# 
+# **vacunas
+# rename P5452 vacunas
+# 
+# **Afilición al Sistema General de Seguridad Social (SGSS)
+# gen sgss=.
+# replace sgss = 1 if (P6090 == 1)
+# replace sgss = 2 if (P6090==2 | P6090==9)
+# lab define sgss 1 "Si" 2 "No" 
+# label values sgss sgss
+# lab var sgss "Tiene sgss"
+# 
+# *Estado de Salud
+# gen Estado_de_Salud=.
+# replace Estado_de_Salud=1 if (P6127==1 | P6127==2)
+# replace Estado_de_Salud=2 if (P6127==3 | P6127==4)
+# label define Estado_de_Salud 1 "Muy Buena o Buena" 2 "Regular o Mala"
+# label values Estado_de_Salud Estado_de_Salud
+# label var Estado_de_Salud "Estado de Salud"
+# 
+# * control crecimiento
+# rename P6161 control_crec
+# 
+# **************************************************************************************************
+# *CUIDADO Y JUEGO **filtrar P6040<5 (niños 0-5 años)
+# 
+# *Actividades de estimulación*
+# gen No_Lee_Cuentos=.
+# replace No_Lee_Cuentos=1 if (P779S1==. | P779S1A1==4)
+# replace No_Lee_Cuentos=0 if (No_Lee_Cuentos==.)
+# lab define No_Lee_Cuentos 1 "Si" 0 "No"
+# lab values No_Lee_Cuentos No_Lee_Cuentos
+# lab var No_Lee_Cuentos "Niños al que cuidador les Lee Cuentos y enseña dibujos al menos una vez al mes"
+# 
+# gen No_Contar_Cuentos=.
+# replace No_Contar_Cuentos=1 if (P779S2==. |  P779S2A1==4)
+# replace No_Contar_Cuentos=0 if (No_Contar_Cuentos==.)
+# lab define No_Contar_Cuentos 1 "Si" 0 "No"
+# lab values No_Contar_Cuentos No_Contar_Cuentos
+# lab var No_Contar_Cuentos "Niños cuidador les Cuenta Cuentos o relatos al menos una vez al mes"
+# 
+# gen No_Actv_Artist=.
+# replace No_Actv_Artist=1 if (P779S3==. | P779S3A1==4)
+# replace No_Actv_Artist=0 if (No_Actv_Artist==.)
+# lab define No_Actv_Artist 1 "Si" 0 "No"
+# lab values No_Actv_Artist No_Actv_Artist
+# lab var No_Actv_Artist "Niños que realizan act artisticas o manuali al menos una vez al mes"
+# 	
+# gen No_Canta=.
+# replace No_Canta=1 if (P779S11==. | P779S11A1==4)
+# replace No_Canta=0 if (No_Canta==.)
+# lab define No_Canta 1 "Si" 0 "No"
+# lab values No_Canta No_Canta
+# lab var No_Canta "Niños que cantan al menos una vez al mes"
+# 
+# gen No_TocaInstru=.
+# replace No_TocaInstru=1 if (P779S12==. | P779S12A1==4)
+# replace No_TocaInstru=0 if (No_TocaInstru==.)
+# lab define No_TocaInstru 1 "Si" 0 "No"
+# lab values No_TocaInstru No_TocaInstru
+# lab var No_TocaInstru "Niños que cantan o tocan algún instrumento al menos una vez al mes"
+# 
+# gen No_Juego_rondas=.
+# replace No_Juego_rondas=1 if (P779S5==. | P779S5A1==4)
+# replace No_Juego_rondas=0 if (No_Juego_rondas==.)
+# lab define No_Juego_rondas 1 "Si" 0 "No"
+# lab values No_Juego_rondas No_Juego_rondas
+# lab var No_Juego_rondas "Niños que realizan juegos o rondas con su cuidador al menos una vez al mes"
+# 
+# *Crear variable que junte los 1 generados en cada una de las variables creadas*
+# gen No_Actividad_Estimulacion=.
+# replace No_Actividad_Estimulacion=1 if (No_Lee_Cuentos==1 & No_Contar_Cuentos==1 & No_Actv_Artist==1 & No_Canta==1 & No_TocaInstru==1 & No_Juego_rondas==1  )
+# replace No_Actividad_Estimulacion=2 if (No_Actividad_Estimulacion==.)
+# lab define No_Actividad_Estimulacion 1 "Si" 2 "No"
+# lab values No_Actividad_Estimulacion No_Actividad_Estimulacion
+# lab var No_Actividad_Estimulacion "Niños realizan alguna act. de esti. al menos 1 vez a la semana o a diario"
+# 
+# *Actividad deportiva*
+# gen Actividad_Deportiva=.
+# replace Actividad_Deportiva=1 if (P779S8==1 & P779S8A1==2)
+# replace Actividad_Deportiva=2 if (Actividad_Deportiva==.)
+# lab define Actividad_Deportiva 1 "Si" 2 "No"
+# lab values Actividad_Deportiva Actividad_Deportiva
+# lab var Actividad_Deportiva "Niños realizan alguna actividad deportiva al menos una vez a la semana"
+# 
+# *No asisten a CDI*
+# gen Asiste_CDI=.
+# replace Asiste_CDI=1 if (P6040>=2 & P6040<=5 & P51==1)
+# replace Asiste_CDI=2 if (P6040>=2 & P6040<=5 & P51>1)
+# *replace Asiste_CDI =2 if (Asiste_CDI==.)
+# lab define Asiste_CDI 1 "Si" 2 "No"
+# lab values Asiste_CDI Asiste_CDI
+# lab var Asiste_CDI "Niños <5 que asisten a CDI"
+# 
+# * Programas de Protección especial del ICBF
+# rename P780S3 icbf
+# replace icbf =2 if (icbf==.)
+# **************************************************************************************************
+# *SEGURIDAD Y RIESGOS
+# 
+# *Afectación Victimas de Hecho Violento*
+# gen Victima_Hecho_Viol=.
+# replace Victima_Hecho_Viol=1 if (P9025S1==1 | P9025S2==1)
+# replace Victima_Hecho_Viol=2 if (Victima_Hecho_Viol==.)
+# label define Victima_Hecho_Viol 1 "Si" 2 "No"
+# label values Victima_Hecho_Viol Victima_Hecho_Viol
+# label var Victima_Hecho_Viol "Hogares donde algún miembro del hogar ha sido víctima de algún hecho violento"
+# 
+# *Afectación fenómeno natural*
+# gen Afect_Fenome_Natural=.
+# replace Afect_Fenome_Natural=1 if (P4065S1==1 | P4065S2==1 | P4065S3==1 | P4065S4==1)
+# replace Afect_Fenome_Natural=2 if (Afect_Fenome_Natural==.)
+# label define Afect_Fenome_Natural 1 "Si" 2 "No"
+# label values Afect_Fenome_Natural Afect_Fenome_Natural
+# label var Afect_Fenome_Natural "Hogares que ha sido afectada por algún fenómeno natural"
+# 
+# *Afectación entorno familiar
+# *cuidado por un menor
+# gen cuidado_menor=.
+# replace cuidado_menor=1 if (P51==6)
+# replace cuidado_menor =2 if (cuidado_menor==.)
+# lab define cuidado_menor 1 "Si" 2 "No"
+# lab values cuidado_menor cuidado_menor
+# lab var cuidado_menor "Cuidado menor"
+# 
+# **************************************************************************************************
+# **************************************************************************************************
+# *HOGAR CON EXCLUSION
+# gen hogar_exclusion=.
+# *Identidad Legal
+# replace hogar_exclusion=1 if (Registro_civil==2)
+# *Bienestar Material
+# replace hogar_exclusion=1 if (seg_alim==1 & ingresos_flia==1 & hacinnomiti==1)
+# replace hogar_exclusion=1 if (quintil==1 | quintil==2)
+# *Salud
+# replace hogar_exclusion=1 if (Estado_de_Salud==2 & sgss==2 & vacunas==2 & control_crec==2)
+# *Cuidado, educación y juego
+# replace hogar_exclusion=1 if (No_Actividad_Estimulacion==2 & Actividad_Deportiva==2 & icbf==1)
+# *Seguridad y Riesgos
+# replace hogar_exclusion=1 if (Victima_Hecho_Viol==1 & Afect_Fenome_Natural==1 & cuidado_menor==1)
+# 
+# replace hogar_exclusion=2 if (hogar_exclusion==.)
+# label define hogar_exclusion 1 "Si" 2 "No"
+# label values hogar_exclusion hogar_exclusion
+# label var hogar_exclusion "Hogares en riesgo de Exclusion"
+# 
+# **tabulate P6040 quintil if P6040<5        
+# **************************************************************************************************
+# ** VARIABLES
+# rename P6020 Sexo
+# rename P6040 Edad
+# 
+# keep DIRECTORIO SECUENCIA_ENCUESTA SECUENCIA_P REGION DPTO FEX_C PERCAPITA I_HOGAR Sexo Edad Zona Registro_civil seg_alim hacinnomiti vacunas sgss Estado_de_Salud control_crec No_Actividad_Estimulacion Actividad_Deportiva icbf Victima_Hecho_Viol Afect_Fenome_Natural cuidado_menor ingresos_flia quintil I_HOGAR hogar_exclusion
+```
+
+# 2. Análisis exploratorio
+
+```{r load_data, include=FALSE}
+### Cargar encuesta completa
+encv_2018_nens <- foreign::read.dta('VARIABLES_ENCV_2018.dta')
+depto <- read.csv("depto.csv",sep=',')
+depto$DPTO[depto$DPTO == 5] <- "05"
+depto$DPTO[depto$DPTO == 8] <- "08"
+
+encv_2018_nens <- merge(encv_2018_nens,depto, by="DPTO", all = TRUE)
+encv_2018_nens$DEPTO_D <- as.factor(encv_2018_nens$DEPTO_D)
+encv_2018_nens <- select(encv_2018_nens,-DPTO)
+```
+
+Se hizo un análisis exploratorio descriptivo de la base de datos de las variables que se han seleccionado para continuar con el análisis que se ha propuesto para este trabajo de final de Master. 
+
+```{r bd_nens, include=FALSE}
+factor_design<-svydesign(id=~1,weight=~FEX_C,data=encv_2018_nens)
+write.csv(encv_2018_nens, file = "encv_2018_nens2.csv", row.names = FALSE) # guarda un archivo csv
+```
+
+__Tabla resumen__
+Descripción general amplia de un dataframe.
+```{r}
+# La función skim() es una alternativa a summary(), la cual nos proporciona rápidamente una descripción general amplia de un dataframe.
+
+skim(encv_2018_nens) 
+```
+
+___Distribución niños por departamentos___
+```{r}
+encv_2018_nens %>% tab(DEPTO_D)
+```
+
+___Distribución niños por Edad y Sexo___
+```{r}
+encv_2018_nens %>% tab(Edad,Sexo)
+```
+
+___Número de datos ausentes por variable___
+```{r}
+encv_2018_nens %>% map_dbl(.f = function(x){sum(is.na(x))})
+```
+
+Las variables seleccionadas de la base de datos no tienen valores ausentes.
+
+## Variables relacionadas a Exclusión Social
+
+Se han hecho un merge de las bases de datos de la ENCV-2018 __(HOGARES, PERSONAS Y VIVIENDAS)__ y un preprocesamiento inicial usando el software STATA 12, en donde se han seleccionado las variables asociadas a la exclusión social. Se ha creado una base de datos nueva solo con los niños < 5 años y que a continuación se muestra su distribución por departamento. Esta nueva base de datos cuenta con 26957 observaciones, se hace este filtrado porque se quiere centrar este trabajo en los hogares en los que hay niños menores de 5 años y se encuentran en posible exclusión social.
+
+Se crearán los indicadores individuales por variable y dimensión para generar un resumen, en el que se intentara visualizar la realidad del país y en donde se mostraran los porcentajes del peor escenario y cuáles son los departamentos en donde hay alta probabilidad de caer el exclusión social.
+
+Las variables seleccionadas se clasifican en 5 grandes Dimensiones (Identidad Legal, Bienestar Material, Salud, Cuidado, educación y juego y Seguridad y Riesgos)
+
+### Identidad Legal
+
+__Registro civil de nacimiento - Identidad__
+
+El 4.40% de los niños Colombianos no han sido registrado. (Porcentaje de niños (0-5) que no tienen registro civil (P1894))
+
+```{r registro_civil}
+encv_2018_nens %>% tab(Registro_civil)
+```
+
+### Bienestar Material
+
+__Alimentación - Nutrición__
+
+En el 6.67% de los hogares en donde en donde viven niños menores de 5 años, la última semana no se consumió alguna de las 3 comidas diarias. (Porcentaje de niños (0-5) que viven en hogares donde la semana anterior de la encuesta, por falta de dinero no se consumió alguna de las tres comidas (P8706))
+
+```{r nutrición}
+encv_2018_nens %>% tab(seg_alim)
+```
+
+__Ingresos - Pobreza Subjetiva__
+
+El 50.23% de los niños Colombianos viven en hogares en donde los ingresos no alcanzan para cubrir los gatos mínimos. (Porcentaje de niños (0-5) que viven en hogares donde los ingresos del hogar no alcanzan a cubrir los gastos mínimos (P9090))
+
+```{r ingresos}
+encv_2018_nens %>% tab(ingresos_flia)
+```
+
+__Condiciones de Vivienda - Pobreza Subjetiva__
+
+El 20.05% de los niños Colombianos viven en hogares con condiciones desfavorables y se clasifican como familias Muy pobres y el 19.95% como familias Pobres. (Porcentaje de niños (0-5) en los que NO se encuentran Condiciones de vivienda favorables (agua, suelos, pared) y tenencia de bienes de consumo duradero (carro, moto, ordenador)) 
+
+```{r hogar_pobre}
+encv_2018_nens %>% tab(quintil)
+```
+
+__Hacinamiento - Pobreza Subjetiva__
+
+El 8.27% de los niños Colombianos viven en hacinamiento no mitigable. (Porcentaje de niños (0-5) que viven en hogares donde hay hacinamiento no mitigable (5 o más personas por cuarto)(CANT_PERSONAS_HOGAR/P5010))
+
+```{r hacinamiento}
+encv_2018_nens %>% tab(hacinnomiti)
+```
+
+### Salud
+
+__Acceso Sistema de Salud - Cobertura de Salud__
+
+El 8.13% de los niños no se encuentran afiliados a la seguridad social. (Porcentaje de niños (0-5) que NO están afiliados al Sistema General de Seguridad Social (SGSS) (P6090))
+
+```{r sgss}
+encv_2018_nens %>% tab(sgss)
+```
+
+__Servicios de Prevención - Vacunas__
+
+El 5.49% de los niños no se encuentran vacunados. (Porcentaje de niños (0-5) que NO tienen el esquema completo de vacunación según su edad (P5452))
+
+```{r vacunas}
+encv_2018_nens %>% tab(vacunas)
+```
+
+__Salud autoreportada - Estado de Salud__
+
+El 5% de los padres en hogares con niños 0-5 años reportan no tener un buen estado de salud. (Porcentaje de niños (0-5) cuyos padres reportaron tener estado de salud (Regular y Mala))
+
+```{r estado_salud}
+encv_2018_nens %>% tab(Estado_de_Salud)
+```
+
+__Servicios de Prevención - Control Crecimiento__
+
+El 12.09% de los niños no fueron llevados a controles de crecimiento. (Porcentaje de niños (0-5) que NO son llevados a control de crecimiento y desarrollo (P6161))
+
+```{r control_crec}
+encv_2018_nens %>% tab(control_crec)
+```
+
+### Cuidado, Educación y Juego
+
+__Aprendizaje Temprano, Juegos - Estimulación__
+
+El 64.05% de los niños no han contado con estimulación de aprendizaje a temprana edad. Porcentaje de niños (0-5) que NO realizan con su cuidador alguna actividad de estimulación (leer, cantar, contar, juegos y rondas) o lo hacen una vez al mes (pero no todos los meses).
+
+```{r estimulacion}
+encv_2018_nens %>% tab(No_Actividad_Estimulacion)
+```
+
+__Actividad física - Actividades Deportivas__
+
+El 93.39% de los niños (4-5 años) no realizan actividades deportivas con frecuencia. (Porcentaje de niños (4-5) que NO realizan una actividad deportiva con su cuidador o lo hacen una vez al mes (no todos los meses))
+
+```{r, include=FALSE}
+deporte <- encv_2018_nens %>% filter(Edad>=4 & Edad<5)
+factor_design_dep<-svydesign(id=~1,weight=~FEX_C,data=deporte)
+survival_dep <- as.data.frame(svyby(~Actividad_Deportiva,~DEPTO_D,factor_design_dep,FUN=svymean,na.rm=TRUE))
+survival_dep <- select(survival_dep,Actividad_DeportivaNo)
+rm(factor_design_dep)
+```
+
+```{r deporte}
+deporte %>% tab(Actividad_Deportiva)
+```
+
+__Protección Especial - ICBF__
+
+El 5.69% de los niños están en programas de protección. (Porcentaje de niños (0-5) que SI se encuentran en Programas de protección especial del ICBF (P780S3))
+
+```{r icbf}
+encv_2018_nens %>% tab(icbf)
+```
+
+### Seguridad y Riesgos
+
+__Exposición a hechos violentos - Violencia__
+
+El 9.47% de los personas que forman el hogar han estado expuestos a hechos violentos. (Porcentaje de niños (0-5)que viven en hogares donde algún miembro del hogar ha sido víctima de algún hecho violento (P9025S1,P9025S2))
+
+```{r violencia}
+encv_2018_nens %>% tab(Victima_Hecho_Viol)
+```
+
+__Riesgos del entorno comunitario - Fenómeno Natural__
+
+El 17.77% de los hogares ha sido afectado por Inundaciones, avalanchas, derrumbes, hundimiento de terreno, tormentas o vendavales. Porcentaje de niños (0-5) que viven en hogares que han sido afectados por algún fenómeno natural (P4065S1, P4065S2, P4065S3y P4065S4)
+
+```{r fenomeno}
+encv_2018_nens %>% tab(Afect_Fenome_Natural)
+```
+
+__Riesgos del entorno familiar - Cuidado Menor__
+
+El 0.26 % de los niños son cuidados por menores de edad. (Porcentaje de niños (0-5) que permanecen la mayor parte del tiempo con un menor de 18 años (P51 opción 6))
+
+```{r cuidado}
+encv_2018_nens %>% tab(cuidado_menor)
+```
+
+### Riesgo de Exclusión Social
+
+El 44.30% de los hogares encuestados tienen una alta probabilidad de estar en riesgo de exclusion social. Esta es una variable artificial, en la que se ha intentado resumir cuando un hogar puede caer o estar en los indicadores de hogares en exclusion social debido a las características con las que cuenta.
+
+Las variables se han agrupado tomando las siguientes parámetros:
+  
+  * __Identidad Legal:__ 
+* Si el niño __NO__ ha sido registrado.
+
+* __Bienestar Material:__
+* Hogares que por falta de dinero __NO__ se consumió alguna de las tres comidas.
+* Hogares donde los ingresos del hogar __NO__ alcanzan a cubrir los gastos mínimos.
+* Hogares que __NO__ se encuentran con Condiciones de vivienda favorables.
+* Hogares que viven en hogares donde __SI__ hay hacinamiento no mitigable.
+
+* __Salud:__
+* Niños que __NO__ están afiliados al Sistema General de Seguridad Social.
+* Niños que __NO__ tienen el esquema completo de vacunación.
+* Padres que reportaron tener estado de salud __"Regular y Mala"__.
+* Niños que __NO__ son llevados a control de crecimiento y desarrollo
+
+* __Cuidado, Educación y Juego:__
+* Niños que __NO__ realizan con su cuidador alguna actividad de estimulación.
+* Niños que __NO__ realizan una actividad deportiva con su cuidador o lo hacen una vez al mes.
+* Niños que __SI__ se encuentran en Programas de protección especial del ICBF.
+
+* __Seguridad y Riesgos:__
+* Niños que viven en hogares donde algún miembro del hogar ha sido víctima de algún hecho violento.
+* Niños que viven en hogares que han sido afectados por algún fenómeno natural. 
+* Niños que permanecen la mayor parte del tiempo con un menor de 18 años.
+
+```{r hogar_exc}
+encv_2018_nens %>% tab(hogar_exclusion)
+```
+
+# 3. Preprocesamiento
+
+Se realizarán las transformaciones necesarias en la búsqueda de encontrar buenos resultados en el algoritmo de machine learning. El modelo será aprendido con los datos de entrenamiento (80%) y luego se aplicará el modelo a los datos de test (20%), luego se evaluarán los modelos que se generen y el error incurrido.
+
+### Imputación de valores ausentes
+
+```{r, include=FALSE}
+encv_2018_ml <- select(encv_2018_nens,-DIRECTORIO,-SECUENCIA_ENCUESTA,-SECUENCIA_P, -PERCAPITA, -REGION)
+```
+
+```{r nans}
+nrow(na.omit(encv_2018_ml))
+```
+
+No tenemos valores ausentes en las variables seleccionadas para nuestro estudio.
+
+### Binarización de las variables cualitativas
+
+Se crean variables dummy con cada uno de los niveles de las variables cualitativas de las variables seleccionadas anteriormente.
+
+```{r binarizacion, include=FALSE}
+set.seed(123) # Semilla reproducibiliad futuras
+encv_2018_ml$Zona <- unclass(encv_2018_ml$Zona)
+encv_2018_ml$Sexo <- unclass(encv_2018_ml$Sexo)
+encv_2018_ml$vacunas <- unclass(encv_2018_ml$vacunas)
+encv_2018_ml$control_crec<- unclass(encv_2018_ml$control_crec)
+encv_2018_ml$cuidado_menor<- unclass(encv_2018_ml$cuidado_menor)
+encv_2018_ml$icbf<- unclass(encv_2018_ml$icbf)
+encv_2018_ml$quintil<- unclass(encv_2018_ml$quintil)
+encv_2018_ml$Asiste_CDI<- unclass(encv_2018_ml$Asiste_CDI)
+encv_2018_ml$pobreza<- unclass(encv_2018_ml$pobreza)
+encv_2018_ml$seg_alim<- unclass(encv_2018_ml$seg_alim)
+encv_2018_ml$Registro_civil<- unclass(encv_2018_ml$Registro_civil)
+encv_2018_ml$hacinnomiti<- unclass(encv_2018_ml$hacinnomiti)
+encv_2018_ml$sgss<- unclass(encv_2018_ml$sgss)
+encv_2018_ml$No_Actividad_Estimulacion<- unclass(encv_2018_ml$No_Actividad_Estimulacion)
+encv_2018_ml$Actividad_Deportiva<- unclass(encv_2018_ml$Actividad_Deportiva)
+encv_2018_ml$Estado_de_Salud<- unclass(encv_2018_ml$Estado_de_Salud)
+encv_2018_ml$Afect_Fenome_Natural<- unclass(encv_2018_ml$Afect_Fenome_Natural)
+encv_2018_ml$Victima_Hecho_Viol<- unclass(encv_2018_ml$Victima_Hecho_Viol)
+encv_2018_ml$Embarazo_Adolescente<- unclass(encv_2018_ml$Embarazo_Adolescente)
+encv_2018_ml$ingresos_flia<- unclass(encv_2018_ml$ingresos_flia)
+clustering <- encv_2018_ml
+encv_2018_ml$DEPTO_D<- unclass(encv_2018_ml$DEPTO_D)
+```
+
+```{r}
+head(encv_2018_ml)
+```
+
+```{r, include=FALSE}
+binari <- encv_2018_ml %>% select(Registro_civil,seg_alim,quintil,ingresos_flia,hacinnomiti,sgss,vacunas,control_crec, Actividad_Deportiva,icbf,Victima_Hecho_Viol, Afect_Fenome_Natural, cuidado_menor, Edad, Sexo, No_Actividad_Estimulacion,Estado_de_Salud,I_HOGAR) %>%
+          nearZeroVar(saveMetrics = TRUE)
+```
+
+### Variables con varianza próxima a cero
+```{r}
+DT::datatable(binari,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) )) %>% formatRound('freqRatio', 3) %>% formatPercentage('percentUnique', 2)
+```
+
+Entre los predictores incluidos en el modelo, se detecta que los predictores: Registro_civil, Actividad_Deportiva, cuidado_menor y Estado_de_Salud cuentan con varianza cero o próxima a cero.
+
+### Estandarización y escalado
+
+La escala cuando los predictores son numéricos, así como la magnitud de su varianza pueden influir en el modelo. He usado la estrategia de _centrado_ en la variable Ingresos del hogar, para evitar que está tenga una influencia en el modelo.
+
+```{r centrado}
+encv_2018_ml$I_HOGAR <- scale(encv_2018_ml$I_HOGAR, center=TRUE, scale=FALSE)
+encv_2018_ml$I_HOGAR <- as.numeric(encv_2018_ml$I_HOGAR)
+
+head(encv_2018_ml$I_HOGAR)
+```
+
+### Distribución de variables respuesta
+
+Cuando se crea un modelo, es muy importante estudiar la distribución de la variable respuesta, ya que, a fin de cuentas, es lo que nos interesa predecir.
+
+```{r}
+ggplot(data = encv_2018_ml, aes(x = hogar_exclusion, y = ..count.., fill = hogar_exclusion)) +
+  geom_bar() +
+  scale_fill_manual(values = c("gray50", "orangered2")) +
+  labs(title = "Hogares en Exclusión") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+# Tabla de frecuencias 
+table(encv_2018_ml$hogar_exclusion)
+```
+
+```{r}
+prop.table(table(encv_2018_ml$hogar_exclusion)) %>% round(digits = 2)
+```
+
+__Porcentaje de aciertos si se predicen los hogares con exclusión social.__
+
+El porcentaje mínimo que hay que intentar superar clasificar a los hogares con exclusion social con los modelos predictivos es del 55.7%.
+
+```{r}
+n_observaciones <- nrow(encv_2018_ml)
+predicciones <- rep(x = "No",  n_observaciones)
+mean(predicciones == encv_2018_ml$hogar_exclusion) * 100
+```
+
+### Distribución de la variable respuesta vs nivel de riqueza
+
+```{r}
+ggplot(data = encv_2018_ml, aes(x = quintil, y = ..count.., fill = hogar_exclusion)) +
+  geom_bar() +
+  scale_fill_manual(values = c("gray50", "orangered2")) +
+  labs(title = "Hogares en Exclusión VS Nivel de Riqueza") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+### Distribución de la variable respuesta vs Hacinamiento
+
+```{r}
+ggplot(data = encv_2018_ml, aes(x = hacinnomiti, y = ..count.., fill = hogar_exclusion)) +
+  geom_bar() +
+  scale_fill_manual(values = c("gray50", "orangered2")) +
+  labs(title = "Hogares en Exclusión VS Hacinamiento") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+encv_2018_nens %>% tab(hacinnomiti,hogar_exclusion)
+```
+
+
+### División de los datos en entrenamiento y test
+
+La base de datos de niños se ha divido en 80% para "Training" y 20% para "Test", estos porcentajes suele dar buenos resultados. Esta repartición se ha realizado de forma aleatoria-estratificada.
+
+Se genera una base de datos en donde se ha excluido las variables __DIRECTORIO, SECUENCIA_ENCUESTA, SECUENCIA_P, FEX_C, PERCAPITA, REGION, SEXO, CUIDADO_MENOR,-ESTADO_DE_SALUD, VICTIMA_HECHO_VIOL, VACUNAS y EDAD__ que no son relevantes en nuestro análisis posterior y que solo se han usado para tener un orden en el momento de generar la base de datos de niños.
+
+```{r division_datos, include=FALSE}
+set.seed(123) # Semilla reproducibiliad futuras
+train <- createDataPartition(y = encv_2018_ml$hogar_exclusion, p = 0.8, list = FALSE, times = 1)
+
+datos_train <- encv_2018_ml[train, ]
+datos_test  <- encv_2018_ml[-train, ]
+```
+
+Se verifica a continuación que la distribución de la variable respuesta sea similar tanto en el conjunto de entrenamiento y como en el conjunto de test. 
+
+__Training__
+```{r}
+round(prop.table(table(datos_train$hogar_exclusion))*100,3)
+```
+
+__Test__
+```{r}
+round(prop.table(table(datos_test$hogar_exclusion))*100,3)
+```
+
+Este reparto estratificado de la base de datos asegura que el conjunto de entrenamiento y el conjunto de test sean similares en cuanto a la variable respuesta.
+
+```{r}
+glimpse(datos_train)
+```
+
+```{r}
+glimpse(datos_test)
+```
+
+Tras el Preprocesado de los datos, se han generado un total de 21 variables (20 predictores y la variable respuesta).
+
+
+### Selección de Predictores
+
+Se cuenta con 21 variables que se incluiran como predictores ya que están realmente relacionadas con la variable respuesta, ya que son las que contienen información útil para el modelo, ya que incluir un exceso de variables suele conllevar una reducción de la capacidad predictiva del modelo cuando se expone a nuevos datos (overfitting).
+
+### Métodos de filtrado
+
+Los métodos basados en filtrado evalúan la relevancia de los predictores fuera del modelo para, posteriormente, incluir únicamente aquellos predictores con un p-value inferior a un determinado límite o los n mejores. 
+
+```{r , include=FALSE}
+numCores <- detectCores()
+numCores
+
+particiones = 10
+repeticiones = 1
+set.seed(123) # Semilla reproducibilidad futuras
+
+seeds <- sample.int(1000, particiones * repeticiones + 1)
+
+# Control del filtrado
+# ==============================================================================
+ctrl_filtrado <- sbfControl(functions = rfSBF,  ## 10-fold CV
+                            method = "repeatedcv",
+                            number = particiones, 
+                            repeats = repeticiones,
+                            seeds = seeds, 
+                            verbose = FALSE, 
+                            saveDetails = TRUE, 
+                            allowParallel = TRUE)
+set.seed(234) # Semilla reproducibilidad futuras
+
+rf_sbf <- sbf(hogar_exclusion ~ ., 
+              data = datos_train %>% select(-FEX_C),
+              sbfControl = ctrl_filtrado,
+              ntree = 500)
+```
+
+```{r}
+rf_sbf
+```
+
+```{r}
+rf_sbf$optVariables
+```
+
+La selección del método de filtrado identifica como mejor modelo el formado por 18 predictores. 
+
+### Importancia de las Variables
+
+Otra estrategia ampliamente extendida para estudiar la importancia de variables es el empleo de Random Forest.
+
+```{r, include=FALSE}
+datos_rf <- select(encv_2018_ml,-FEX_C)
+datos_rf <- map_if(.x = datos_rf, .p = is.character, .f = as.factor) %>%
+            as.data.frame()
+modelo_randforest <- randomForest(formula = hogar_exclusion ~ . ,
+                                  data = na.omit(datos_rf),
+                                  mtry = 5,
+                                  importance = TRUE, 
+                                  ntree = 1000) 
+importancia <- as.data.frame(modelo_randforest$importance)
+importancia <- rownames_to_column(importancia,var = "variable")
+
+p1 <- ggplot(data = importancia, aes(x = reorder(variable, MeanDecreaseAccuracy),
+                               y = MeanDecreaseAccuracy,
+                               fill = MeanDecreaseAccuracy)) +
+      labs(x = "variable", title = "Reducción de Accuracy") +
+      geom_col() +
+      coord_flip() +
+      theme_bw() +
+      theme(legend.position = "bottom")
+
+p2 <- ggplot(data = importancia, aes(x = reorder(variable, MeanDecreaseGini),
+                               y = MeanDecreaseGini,
+                               fill = MeanDecreaseGini)) +
+      labs(x = "variable", title = "Reducción de pureza (Gini)") +
+      geom_col() +
+      coord_flip() +
+      theme_bw() +
+      theme(legend.position = "bottom")
+```
+
+```{r}
+ggarrange(p1, p2)
+```
+
+Ambos análisis apuntan a que las variables quintil, icbf, Registro Civil, hacinamiento, I_HOGRA tienen una influencia alta sobre las probabilidades de Exclusión Social.
+
+
+
+# 4. Creación de un Modelo Predictivo
+
+Los datos han sido Preprocesados y se han seleccionado los predictores, lo siguiente es emplear un algoritmo de machine learning que nos permita crear un modelo capaz de representar los patrones en los datos de entrenamiento y testearlos en nuevas observaciones. Por lo general, las etapas seguidas para obtener un buen modelo son:
+
+* __Entrenar el modelo__
+* __Predicción y evaluación del modelo__
+* __Mejora del modelo__
+
+
+## Entrenamiento del modelo
+
+Entre los argumentos de la función train() que se plantean usar se destacan:
+
+__* formula:__ la fórmula del modelo que se quiere crear.
+
+__* x, y:__ se pueden pasar por separado los valores de los predictores y de la variable respuesta.
+
+__* method:__ el nombre del algoritmo que se desea emplear.
+
+__* metric:__ las métricas empleadas para evaluar la capacidad predictiva del modelo.
+
+__* trControl:__ especificaciones adicionales sobre la forma de llevar a cabo el entrenamiento del modelo.
+
+__* ...:__ argumentos propios del algoritmo empleado.
+
+Ajustaré un modelo basado en una máquina vector soporte lineal que prediga la exclusión social en Colombia por departamentos en función de los predictores disponibles, pero tambien se excluirán las variables con poca importancia o influencia en la creación del modelo predictivo. 
+
+```{r}
+# Predictores: ##  "control_crec", "icbf","I_HOGAR", "ingresos_flia", "seg_alim", "Registro_civil", "hacinnomiti", "quintil", "sgss" , "Actividad_Deportiva","Afect_Fenome_Natural","Zona","DEPTO_D"
+
+datos_train <- select(datos_train, -Sexo, -cuidado_menor,-Estado_de_Salud,-Victima_Hecho_Viol,-vacunas,-Edad)
+modelo_svmlineal <- train(hogar_exclusion ~ .,
+                          method = "svmLinear", 
+                          data = datos_train %>% select(-FEX_C))
+```
+
+```{r}
+modelo_svmlineal$finalModel
+```
+
+## Evaluación del modelo mediante resampling
+ 
+A continuación se ajusta de nuevo una máquina vector soporte lineal, esta vez con validación cruzada repetida para estimar su error.
+ 
+```{r, include=FALSE}
+registerDoParallel(makeCluster(2))
+particiones  <- 10
+repeticiones <- 1
+
+set.seed(123) # Semilla reproducibiliad futuras
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, 1) 
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+#===============================================================================
+control_train <- trainControl(method = "repeatedcv",  ## 10-fold CV
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste del modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+modelo_svmlineal <- train(hogar_exclusion ~ ., 
+                          data = datos_train %>% select(-FEX_C),
+                          method = "svmLinear",
+                          metric = "Accuracy",
+                          trControl = control_train)
+```
+
+```{r}
+modelo_svmlineal
+```
+
+```{r}
+DT::datatable(modelo_svmlineal$resample,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) )) %>% formatPercentage(1:2, 3)
+```
+
+```{r,include=FALSE}
+p1 <- ggplot(data = modelo_svmlineal$resample, aes(x = Accuracy)) +
+  geom_density(alpha = 0.5, fill = "gray50") +
+  geom_vline(xintercept = mean(modelo_svmlineal$resample$Accuracy),
+             linetype = "dashed") +
+  theme_bw() 
+p2 <- ggplot(data = modelo_svmlineal$resample, aes(x = 1, y = Accuracy)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5, fill = "gray50") +
+  geom_jitter(width = 0.05) +
+  labs(x = "") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+final_plot <- ggarrange(p1, p2)
+final_plot <- annotate_figure(
+  final_plot,
+  top = text_grob("Accuracy en la validación", size = 15))
+```
+
+```{r}
+final_plot
+```
+
+El accuracy promedio estimado usando un modelo de __Máquina Vector Soporte Lineal__, se ha conseguido un accuracy promedio de validación del 98.74%, esto significa que el modelo predice correctamente la exclusion social por departamentos para Colombia un 98.74% de las veces. 
+
+## Optimización de hiperparámetros 
+
+```{r,include=FALSE}
+registerDoParallel(makeCluster(2))
+particiones  <- 10
+repeticiones <- 3
+hiperparametros <- data.frame(C = c(0.001, 0.01, 0.1, 0.5, 1, 10))
+
+set.seed(123) # Semilla reproducibiliad futuras
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros)) 
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+#===============================================================================
+control_train <- trainControl(method = "repeatedcv",  ## 10-fold CV
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste Modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+modelo_svmlineal <- train(hogar_exclusion ~ ., 
+                          data = datos_train %>% select(-FEX_C),
+                          method = "svmLinear",
+                          tuneGrid = hiperparametros,
+                          metric = "Accuracy",
+                          trControl = control_train)
+```
+
+```{r}
+modelo_svmlineal
+```
+
+Como hemos empleado validación cruzada con 10 particiones y 1 repeticiones, caret ha ajustado el modelo svmlineal 10 x 3 = 30 veces por cada valor de C.
+
+```{r}
+DT::datatable(modelo_svmlineal$resample,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) )) %>% formatPercentage(1:2, 3)
+```
+
+```{r}
+ggplot(data = modelo_svmlineal$resample,
+       aes(x = as.factor(C), y = Accuracy, color = as.factor(C))) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  # Línea horizontal en el accuracy basal
+  geom_hline(yintercept = 0.98, linetype = "dashed") +
+  labs(x = "C") +
+  theme_bw() + theme(legend.position = "none")
+```
+
+
+```{r}
+ggplot(modelo_svmlineal, highlight = TRUE) +
+  labs(title = "Evolución del accuracy del modelo_svmlineal en función de C") +
+  theme_bw()
+```
+
+
+# 5. Predicción
+
+Se ajustara el modelo usando la función predict() del paquete caret, con el que podremos predecir nuevos datos utilizando el objeto devuelto por train().
+
+```{r}
+predicciones_raw_svmlin <- predict(modelo_svmlineal, 
+                                   newdata = datos_test %>% select(-FEX_C),
+                                   type = "raw")
+```
+
+```{r}
+head(predicciones_raw_svmlin)
+```
+
+El algoritmo svmLinear no calcula probabilidades, para obtenerlas se reajustara el modelo indicando en el control_train __`classProbs = TRUE`__.
+
+```{r , include=FALSE}
+particiones  <- 10
+repeticiones <- 5
+hiperparametros <- expand.grid(C = c(1))
+
+set.seed(123)
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros)) 
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+#===============================================================================
+# se reajusta el modelo indicando `classProbs = TRUE`.
+control_train <- trainControl(method = "repeatedcv",  ## 10-fold CV
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all",
+                              verboseIter = FALSE,
+                              classProbs = TRUE, 
+                              allowParallel = TRUE)
+# Ajuste Modelo
+# ==============================================================================
+set.seed(342)
+modelo_svmlineal <- train(hogar_exclusion ~ ., 
+                          data = datos_train %>% select(-FEX_C),
+                          method = "svmLinear",
+                          tuneGrid = hiperparametros,
+                          metric = "Accuracy",
+                          trControl = control_train)
+```
+
+```{r}
+predicciones_prob_svml <- predict(modelo_svmlineal, 
+                                  newdata = datos_test %>% select(-FEX_C),
+                                  type = "prob")
+predicciones_prob_svml %>% head()
+```
+
+```{r}
+testY = datos_test %>% select(-FEX_C)
+predicciones <- extractPrediction(
+                  models = list(svm = modelo_svmlineal),
+                  testX = datos_test %>% select(-hogar_exclusion,-FEX_C),
+                  testY = testY$hogar_exclusion )
+predicciones %>% head()
+```
+
+## Error de test
+
+```{r}
+confusionMatrix(data = predicciones_raw_svmlin, 
+                reference = datos_test$hogar_exclusion, 
+                positive = "Si")
+```
+
+```{r}
+# Error de test
+error_test_svmlin <- mean(predicciones_raw_svmlin != datos_test$hogar_exclusion)
+paste("El error del test:", round(error_test_svmlin*100, 2), "%")
+```
+
+
+# 6. Modelos
+
+A continuación se entrenan diferentes modelos de machine learning con el objetivo de compararlos e identificar cual de estos arroja el mejor resultado obtiene prediciendo la exclusión social en Colombia por departamentos.
+
+
+## K-Nearest Neighbor (kNN)
+
+K-Nearest Neighbor es uno de los algoritmos de machine learning más simples, este algoritmo intentará identificar observaciones en el conjunto de entrenamiento que se asemejen a la observación de test y asignarle como valor predicho la clase predominante entre dichas observaciones. 
+
+### Ajuste, optimización y validación del modelo
+
+Se ajusta el K-Nearest Neighbor, esta vez con validación cruzada repetida para estimar su error
+
+__*k:__ número de observaciones vecinas empleadas.
+
+```{r, include=FALSE}
+registerDoParallel(makeCluster(2))
+
+particiones  <- 10
+repeticiones <- 5
+hiperparametros <- data.frame(k = c(1, 2, 5, 10, 15, 20, 30, 50))
+
+set.seed(123) # Semilla reproducibiliad futuras
+
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros)) 
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+# ==============================================================================
+control_train <- trainControl(method = "repeatedcv", 
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste del modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+modelo_knn <- train(hogar_exclusion ~ ., 
+                    data = datos_train %>% select(-FEX_C),
+                    method = "knn",
+                    tuneGrid = hiperparametros,
+                    metric = "Accuracy",
+                    trControl = control_train)
+```
+
+```{r}
+predicciones_knn <- predict(modelo_knn, 
+                            newdata = datos_train %>% select(-FEX_C))
+```
+
+```{r}
+modelo_knn
+```
+
+Con un modelo kNN con __k=1__ se consigue un accuracy de validación promedio del 77.53%
+
+```{r}
+# Gráfica del modelo
+# ==============================================================================
+ggplot(modelo_knn, highlight = TRUE) +
+  scale_x_continuous(breaks = hiperparametros$k) +
+  labs(title = "Evolución del accuracy del modelo KNN", x = "K") +
+  theme_bw()
+```
+
+```{r}
+summary(modelo_knn$resample$Accuracy)
+```
+
+El accuracy promedio estimado usando un modelo de __K-Nearest Neighbor__, se ha conseguido un accuracy promedio de validación del 71.67%, esto significa que el modelo predice correctamente la exclusion social por departamentos para Colombia un 71.67% de las veces. 
+
+```{r,include=FALSE}
+predicciones_raw_knn <- predict(modelo_knn, 
+                            newdata = datos_test %>% select(-FEX_C),
+                            type = "raw")
+```
+
+### Error de test
+
+```{r}
+confusionMatrix(data = predicciones_raw_knn, 
+                reference = datos_test$hogar_exclusion, 
+                positive = "Si")
+```
+
+```{r}
+# Error de test
+error_test_KNN <- mean(predicciones_raw_knn != datos_test$hogar_exclusion)
+paste("El error del test:", round(error_test_KNN*100, 2), "%")
+```
+
+## Regresión logística
+
+### Ajuste, optimización y validación del modelo
+
+Este algoritmo no tiene ningún hiperparámetro pero, para que efectúe una regresión logística, hay que indicar __family = "binomial"__.
+
+```{r, include=FALSE}
+registerDoParallel(makeCluster(2))
+particiones  <- 10
+repeticiones <- 5
+hiperparametros <- data.frame(parameter = "none")
+
+set.seed(123) # Semilla reproducibiliad futuras
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros))
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+# ==============================================================================
+control_train <- trainControl(method = "repeatedcv", 
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste del modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+
+modelo_logistic <- train(hogar_exclusion ~ ., 
+                         data = datos_train %>% select(-FEX_C),
+                         method = "glm",
+                         tuneGrid = hiperparametros,
+                         metric = "Accuracy",
+                         trControl = control_train,
+                         family = "binomial")
+```
+
+```{r}
+predicciones_logistic <- predict(modelo_logistic, 
+                            newdata = datos_train %>% select(-FEX_C))
+```
+
+Una validación cruzada con 10 particiones y 5 repeticiones implica ajustar y evaluar el modelo 10 x 5 = 50 veces, cada vez con una partición distinta, y un ajuste con los datos de entrenamiento para crear el modelo final.
+
+```{r}
+modelo_logistic
+```
+
+```{r}
+summary(modelo_logistic$finalModel)
+```
+
+```{r}
+DT::datatable(modelo_logistic$resample,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) )) %>% formatPercentage(1:2, 3)
+```
+
+```{r}
+summary(modelo_logistic$resample$Accuracy)
+```
+
+El accuracy promedio estimado usando un modelo de __Regresión logística__, se ha conseguido un accuracy promedio de validación del 98.71%, esto significa que el modelo predice correctamente la exclusion social por departamentos para Colombia un 98.71% de las veces. 
+
+```{r,include=FALSE}
+predicciones_raw_log <- predict(modelo_logistic, 
+                            newdata = datos_test %>% select(-FEX_C),
+                            type = "raw")
+```
+
+### Error de test
+
+```{r}
+confusionMatrix(data = predicciones_raw_log, 
+                reference = datos_test$hogar_exclusion,
+                positive = "Si")
+```
+
+```{r}
+# Error de test
+error_test_log <- mean(predicciones_raw_log != datos_test$hogar_exclusion)
+paste("El error del test:", round(error_test_log*100, 2), "%")
+```
+
+
+## Modelo LDA
+
+### Ajuste, optimización y validación del modelo
+
+Este algoritmo no tiene ningún hiperparámetro.
+
+```{r, include=FALSE}
+registerDoParallel(makeCluster(2))
+particiones  <- 10
+repeticiones <- 5
+hiperparametros <- data.frame(parameter = "none")
+
+set.seed(123) # Semilla reproducibiliad futuras
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros))
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+# ==============================================================================
+control_train <- trainControl(method = "repeatedcv", 
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste del modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+
+modelo_lda <- train(hogar_exclusion ~ ., 
+                    data = datos_train %>% select(-FEX_C),
+                    method = "lda",
+                    tuneGrid = hiperparametros,
+                    metric = "Accuracy",
+                    trControl = control_train)
+```
+
+```{r}
+predicciones_lda <- predict(modelo_lda, 
+                            newdata = datos_train %>% select(-FEX_C))
+```
+
+Una validación cruzada con 10 particiones y 5 repeticiones implica ajustar y evaluar el modelo 10 x 5 = 50 veces, cada vez con una partición distinta, y un ajuste con los datos de entrenamiento para crear el modelo final.
+
+```{r}
+modelo_lda
+```
+
+```{r}
+modelo_lda$finalModel
+```
+
+```{r}
+summary(modelo_lda$resample$Accuracy)
+```
+
+El accuracy promedio estimado usando un modelo __LDA__, se ha conseguido un accuracy promedio de validación del 98.05%, esto significa que el modelo predice correctamente la exclusion social por departamentos para Colombia un 98.05% de las veces. 
+
+```{r, include=FALSE}
+predicciones_raw_lda <- predict(modelo_lda, 
+                            newdata = datos_test %>% select(-FEX_C),
+                            type = "raw")
+```
+
+### Error de test
+
+```{r}
+confusionMatrix(data = predicciones_raw_lda, 
+                reference = datos_test$hogar_exclusion, 
+                positive = "Si")
+```
+
+```{r}
+# Error de test
+error_test_lda <- mean(predicciones_raw_lda != datos_test$hogar_exclusion)
+paste("El error del test:", round(error_test_lda*100, 2), "%")
+```
+
+
+## Árbol de Clasificación Simple
+
+
+### Ajuste, optimización y validación del modelo
+
+Este algoritmo no tiene ningún hiperparámetro.
+
+```{r, include=FALSE}
+registerDoParallel(makeCluster(2))
+particiones  <- 10
+repeticiones <- 5
+
+# Hiperparámetros
+hiperparametros <- data.frame(parameter = "none")
+
+set.seed(123) # Semilla reproducibiliad futuras
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros))
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+# Entrenamiento
+# ==============================================================================
+control_train <- trainControl(method = "repeatedcv", 
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste del modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+
+modelo_C50Tree <- train(hogar_exclusion ~ ., 
+                        data = datos_train %>% select(-FEX_C),
+                        method = "C5.0Tree",
+                        tuneGrid = hiperparametros,
+                        metric = "Accuracy",
+                        trControl = control_train)
+```
+
+```{r}
+predicciones_tree <- predict(modelo_C50Tree, 
+                            newdata = datos_train %>% select(-FEX_C))
+```
+
+Una validación cruzada con 10 particiones y 5 repeticiones implica ajustar y evaluar el modelo 10 x 5 = 50 veces, cada vez con una partición distinta, y un ajuste con los datos de entrenamiento para crear el modelo final.
+
+```{r}
+modelo_C50Tree
+```
+
+```{r}
+summary(modelo_C50Tree$finalModel)
+```
+
+```{r}
+summary(modelo_C50Tree$resample$Accuracy)
+```
+
+El accuracy promedio estimado usando un modelo __Árbol de Clasificación Simple__, se ha conseguido un accuracy promedio de validación del 99.99%, esto significa que el modelo predice correctamente la exclusion social por departamentos para Colombia un 99.99% de las veces. 
+
+```{r, include=FALSE}
+predicciones_raw_arbol <- predict(modelo_C50Tree, 
+                            newdata = datos_test %>% select(-FEX_C),
+                            type = "raw")
+```
+
+### Error de test
+
+```{r}
+confusionMatrix(data = predicciones_raw_arbol, 
+                reference = datos_test$hogar_exclusion, 
+                positive = "Si")
+```
+
+```{r}
+# Error de test
+error_test_arbol <- mean(predicciones_raw_arbol != datos_test$hogar_exclusion)
+paste("El error del test:", round(error_test_arbol*100, 2), "%")
+```
+
+
+## Random Forest
+
+### Ajuste, optimización y validación del modelo
+
+El método ranger de caret tiene 3 hiperparámetros:
+
+__* mtry:__ número predictores seleccionados aleatoriamente en cada árbol.
+
+__* min.node.size:__ tamaño mínimo que tiene que tener un nodo para poder ser dividido.
+
+__* splitrule:__ criterio de división.
+
+```{r, include=FALSE}
+registerDoParallel(makeCluster(2))
+particiones  <- 10
+repeticiones <- 5
+hiperparametros <- expand.grid(mtry = c(3, 4, 5, 7),
+                               min.node.size = c(2, 3, 4, 5, 10, 15, 20, 30),
+                               splitrule = "gini")
+
+set.seed(123) # Semilla reproducibiliad futuras
+seeds <- vector(mode = "list", length = (particiones * repeticiones) + 1)
+
+for (i in 1:(particiones * repeticiones)) {
+  seeds[[i]] <- sample.int(1000, nrow(hiperparametros))
+}
+seeds[[(particiones * repeticiones) + 1]] <- sample.int(1000, 1)
+
+#Entrenamiento
+# ==============================================================================
+control_train <- trainControl(method = "repeatedcv", 
+                              number = particiones,
+                              repeats = repeticiones, 
+                              seeds = seeds,
+                              returnResamp = "all", 
+                              verboseIter = FALSE,
+                              allowParallel = TRUE)
+# Ajuste del modelo
+# ==============================================================================
+set.seed(342) # Semilla reproducibiliad futuras
+
+modelo_rf <- train(hogar_exclusion ~ ., 
+                   data = datos_train %>% select(-FEX_C),
+                   method = "ranger",
+                   tuneGrid = hiperparametros,
+                   metric = "Accuracy",
+                   trControl = control_train,
+                   # Número de árboles ajustados
+                   num.trees = 500)
+```
+
+```{r}
+predicciones_rf <- predict(modelo_rf, 
+                            newdata = datos_train %>% select(-FEX_C))
+```
+
+Una validación cruzada con 10 particiones y 5 repeticiones implica ajustar y evaluar el modelo 10 x 5 = 50 veces, cada vez con una partición distinta, y un ajuste con los datos de entrenamiento para crear el modelo final.
+
+```{r}
+modelo_rf
+```
+
+```{r}
+modelo_rf$finalModel
+```
+
+```{r}
+ggplot(modelo_rf, highlight = TRUE) +
+  scale_x_continuous(breaks = 1:30) +
+  labs(title = "Accuracy del modelo Random Forest") +
+  guides(color = guide_legend(title = "mtry"),
+         shape = guide_legend(title = "mtry")) +
+  theme_bw()
+```
+
+Usando un modelo __Random Forest__ con mtry = 7, min.node.size = 15 y splitrule = "gini", se ha conseguido un accuracy promedio de validación del 99.98%.
+
+```{r}
+DT::datatable(modelo_rf$resample,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) )) %>% formatPercentage(1:2, 3)
+```
+
+
+```{r}
+summary(modelo_rf$resample$Accuracy)
+```
+
+
+El accuracy promedio estimado usando un modelo __Random Forest__, se ha conseguido un accuracy promedio de validación del 99.98%, esto significa que el modelo predice correctamente la exclusion social por departamentos para Colombia un 99.98% de las veces. 
+
+```{r, include=FALSE}
+predicciones_raw_rf <- predict(modelo_rf, 
+                            newdata = datos_test %>% select(-FEX_C),
+                            type = "raw")
+```
+
+### Error de test
+
+```{r}
+confusionMatrix(data = predicciones_raw_rf, 
+                reference = datos_test$hogar_exclusion, 
+                positive = "Si")
+```
+
+```{r}
+# Error de test
+error_test_rf <- mean(predicciones_raw_rf != datos_test$hogar_exclusion)
+paste("El error del test:", round(error_test_rf*100, 2), "%")
+```
+
+## Comparando los modelos
+
+Una vez que se han entrenado y optimizado distintos modelos, se tiene que identificar cuál de ellos consigue mejores resultados para el problema en cuestión, en este caso, predecir la presencia de exclusion social en los hogares por cada uno de los departamentos Colombianos. 
+
+### Métricas de validación
+
+```{r,warning=FALSE}
+modelos <- list(KNN = modelo_knn, logistic = modelo_logistic,
+                lda= modelo_lda, arbol = modelo_C50Tree, rf = modelo_rf)
+
+resultados_resamples <- resamples(modelos)
+
+DT::datatable(resultados_resamples$values,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) ))%>% formatPercentage(2:11, 3)
+```
+
+```{r}
+metricas_resamples <- resultados_resamples$values %>%
+  gather(key = "modelo", value = "valor", -Resample) %>%
+  separate(col = "modelo", into = c("modelo", "metrica"),
+           sep = "~", remove = TRUE)
+```
+
+```{r}
+DT::datatable(metricas_resamples,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) ))%>% formatPercentage('valor', 3)
+```
+
+```{r, include=FALSE,warning=FALSE}
+plot_metricas <- metricas_resamples %>% filter(metrica == "Accuracy") %>%
+  group_by(modelo) %>% 
+  mutate(media = mean(valor)) %>%
+  ungroup() %>%
+  ggplot(aes(x = reorder(modelo, media), y = valor, color = modelo)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.6) +
+  scale_y_continuous(limits = c(0.63, 1)) +
+  # Accuracy basal
+  geom_hline(yintercept = 0.75, linetype = "dashed") +
+  annotate(geom = "text", y = 0.55, x = 5.5, label = "Accuracy basal") +
+  theme_bw() +
+  labs(title = "Accuracy medio repeated-CV",
+       subtitle = "Modelos ordenados por media") +
+  coord_flip() +
+  theme(legend.position = "none")
+```
+
+```{r}
+plot_metricas
+```
+
+Para determinar si las diferencias entre los modelos generados son significativas, se recurre a test estadísticos.
+
+__Test de Friedman para comparar el accuracy de los modelos__
+
+```{r}
+matriz_metricas <- metricas_resamples %>% filter(metrica == "Accuracy") %>%
+  spread(key = modelo, value = valor) %>%
+  select(-Resample, -metrica) %>% as.matrix()
+friedman.test(y = matriz_metricas)
+```
+
+Para un nivel de significancia (α = 0.05), el test de Friedman sí encuentra evidencias para rechazar la hipótesis nula de que los 5 clasificadores consiguen la misma precisión.
+
+```{r, include=FALSE}
+# Comparaciones Test suma de rangos de Wilcoxon
+metricas_accuracy <- metricas_resamples %>% filter(metrica == "Accuracy")
+comparaciones  <- pairwise.wilcox.test(x = metricas_accuracy$valor, 
+                                       g = metricas_accuracy$modelo,
+                                       paired = TRUE,
+                                       p.adjust.method = "holm")
+
+comparaciones <- comparaciones$p.value %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "modeloA") %>%
+  gather(key = "modeloB", value = "p_value", -modeloA) %>%
+  na.omit() %>%
+  arrange(modeloA) 
+```
+
+```{r}
+kable(comparaciones, digits = 3, row.names = FALSE, align = "c",caption = NULL)
+
+```
+
+Acorde a las comparaciones por pares, no existen evidencias suficientes para considerar que la capacidad predictiva de los modelos Random Forest y Arbol de Clasificación es distinta.
+
+### Error de test
+
+A continuación se muestran las predicciones de cada uno de los modelos, tanto las observaciones de entrenamiento como para las de test. Con toda esta información, se compararan los resultados de predicción entre modelos y las diferencias entre conjunto de entrenamiento y test.
+
+```{r}
+datos_test <- select(datos_test, -Sexo, -cuidado_menor,-Estado_de_Salud,-Victima_Hecho_Viol,-vacunas,-Edad)
+testY <- datos_test %>% select(-FEX_C)
+predicciones <- extractPrediction(
+  models = modelos,
+  testX = datos_test %>% select(-hogar_exclusion,-FEX_C),
+  testY = testY$hogar_exclusion )
+```
+
+```{r}
+DT::datatable(predicciones,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) ))
+```
+
+Con toda esta información, es sencillo comparar los resultados de predicción entre modelos y las diferencias entre conjunto de entrenamiento y test.
+
+```{r, include=FALSE}
+metricas_predicciones <- predicciones %>%
+                         mutate(acierto = ifelse(obs == pred, TRUE, FALSE)) %>%
+                         group_by(object, dataType) %>%
+                         summarise(accuracy = mean(acierto))
+```
+
+```{r}
+metricas_predicciones$accuracy
+```
+
+Puede verse que, todos los modelos, consiguen más predicciones correctas en el conjunto de entrenamiento que en el de test, de ahí que las métricas obtenidas en el entrenamiento no deban utilizarse para evaluar los modelos, son excesivamente optimistas. El modelo arbol y rf consiguen el accuracy de test más alto.
+
+Cuando he comparado los modelos podria concluir que el mejor modelo es el basado en Arboles Simples y el Random Forest.
+
+```{r}
+comparaciones %>% filter((modeloA == "rf") | (modeloA == "arbol" & modeloB == "rf"))
+```
+
+
+# 7. Análisis Clúster 
+
+## Análisis Clúster por Departamentos
+
+Se ha usado el método del codo o elbow method para estimar el número K óptimo de clusters cuando no se dispone de información adicional en la que basarse, es aplicar el algoritmo de K-means para un rango de valores de K e identificar aquel valor a partir del cual la reducción en la suma total de varianza intra-cluster deja de ser sustancial. 
+
+Ahora continuamos nuestro Analisis con los __Datos Test__, y confirmar que han sido bien clasificados deacuerdo con la realidad del pais (seleccionamos las predicciones del arbol simple).
+
+```{r, include=FALSE}
+datos_test_ind <- cbind(encv_2018_nens[-train, ],predicciones_raw_arbol)
+datos_test_ind <- select(datos_test_ind,-DIRECTORIO,-SECUENCIA_ENCUESTA,-SECUENCIA_P, -PERCAPITA, -REGION,-Sexo, -cuidado_menor,-Estado_de_Salud,-Victima_Hecho_Viol,-vacunas,-Edad)
+
+factor_design_new<-svydesign(id=~1,weight=~FEX_C,data=datos_test_ind)
+
+survival <- as.data.frame(svyby(~Registro_civil+seg_alim+quintil+ingresos_flia+hacinnomiti+sgss+control_crec+
+                                  Actividad_Deportiva+hogar_exclusion+icbf+Afect_Fenome_Natural+
+                                  No_Actividad_Estimulacion+I_HOGAR+predicciones_raw_arbol,
+                           design=factor_design_new,~DEPTO_D,FUN=svymean,na.rm=TRUE))
+
+survival <- cbind(survival,survival_dep)
+
+survival <- select(survival,"Registro_civilNo","seg_alimSi",'ingresos_fliaNo alcanza para cubrir los gatos minimos','quintilMuy pobre','quintilPobre', "hacinnomitiCon hacinamiento", "sgssNo","control_crecNo", "No_Actividad_EstimulacionSi","Actividad_DeportivaNo","icbfSi","Afect_Fenome_NaturalSi","hogar_exclusionSi","predicciones_raw_arbolSi" )
+```
+
+```{r}
+fviz_nbclust(x = survival, FUNcluster = kmeans, method = "wss", k.max = 15, 
+             diss = get_dist(survival, method = "euclidean"), nstart = 50)
+```
+
+En este caso el __K__ óptimo es 3.
+
+```{r}
+set.seed(123)
+km_clusters <- kmeans(x = survival, 
+                      centers = 3, 
+                      nstart = 50)
+
+fviz_cluster(object = km_clusters, data = survival, show.clust.cent = TRUE,
+             ellipse.type = "euclid", star.plot = TRUE, repel = TRUE) +
+  labs(title = "Resultados clustering K-means") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+En el gráfico anterior se puede visualizar las agrupaciones resultantes del clúster. Si el número de variables (dimensionalidad) es mayor de 2, automáticamente realiza un PCA y representa las dos primeras componentes principales.
+
+Al aplicar hierarchical clustering, empleando como medida de similitud la distancia euclídea y linkage complete, se obtiene el siguiente dendrograma.
+
+```{r}
+set.seed(101)
+
+hc_euclidea_completo <- hclust(d = dist(x = survival, method = "euclidean"),
+                               method = "complete")
+
+fviz_dend(x = hc_euclidea_completo, k = 3, cex = 0.4) +
+  geom_hline(yintercept = 0.65, linetype = "dashed") +
+  labs(title = "Herarchical clustering",
+       subtitle = "Distancia euclídeana, Lincage complete, K=3")
+```
+
+En la base del dendrograma, cada observación forma una terminación individual conocida como hoja o leaf del árbol (clasificación de los departamentos).
+
+
+
+## Análsis Clúster por Variables
+
+```{r}
+# Transpone todas las columnas menos la primer
+df_transpose <- data.frame(t(survival[]))
+df_transpose <- df_transpose[ !(rownames(df_transpose) %in% c("hogar_exclusionSi", "predicciones_raw_arbolSi")), ]
+```
+
+Al aplicar hierarchical clustering, empleando como medida de similitud la distancia euclídea y linkage complete, se obtiene el siguiente dendrograma para las variables.
+
+```{r}
+set.seed(101)
+
+hc_euclidea_completo <- hclust(d = dist(x = df_transpose, method = "euclidean"),
+                               method = "complete")
+
+fviz_dend(x = hc_euclidea_completo, k = 3, cex = 0.4) +
+  geom_hline(yintercept = 1.5, linetype = "dashed") +
+  labs(title = "Herarchical clustering",
+       subtitle = "Distancia euclídeana, Lincage complete, K=3")
+```
+
+Una forma menos frecuente de representar los resultados de un hierarchical clustering es combinándolos con una reducción de dimensionalidad por PCA. Primero, se calculan las componentes principales y se representan las observaciones en un scatterplot empleando las dos primeras componentes, finalmente se colorean los clusters mediante elipses.
+
+```{r}
+fviz_cluster(object = list(data=df_transpose, cluster=cutree(hc_euclidea_completo, k=3)),
+             ellipse.type = "convex", repel = TRUE, show.clust.cent = FALSE,
+             labelsize = 8)  +
+  labs(title = "Hierarchical clustering + Proyección PCA",
+       subtitle = "Distancia euclídeana, Lincage complete, K=3") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+
+# 8. Indicador de Exclusión Social
+
+```{r resumen, include=FALSE}
+rm(survival_dep)
+
+##Renombrar variables para el resumen
+names(survival)[names(survival)=="Registro_civilNo"] <- "Registro"
+names(survival)[names(survival)=="seg_alimSi"] <- "Alimentacion"
+names(survival)[names(survival)=='ingresos_fliaNo alcanza para cubrir los gatos minimos'] <- "Ingresos"
+names(survival)[names(survival)=='quintilMuy pobre'] <- "Cond_Vivienda"
+names(survival)[names(survival)=="hacinnomitiCon hacinamiento"] <- "Hacinamiento"
+names(survival)[names(survival)=="sgssNo"] <- "No_SGSS"
+names(survival)[names(survival)=="control_crecNo"] <- "Control_Crec"
+names(survival)[names(survival)=="No_Actividad_EstimulacionSi"] <- "Estimulación"
+names(survival)[names(survival)=="Actividad_DeportivaNo"] <- "Deporte"
+names(survival)[names(survival)=="icbfSi"] <- "Si_ICBF"
+names(survival)[names(survival)=="Victima_Hecho_ViolSi"] <- "Violencia"
+names(survival)[names(survival)=="Afect_Fenome_NaturalSi"] <- "Fenomeno_Natu"
+names(survival)[names(survival)=="I_HOGAR"] <- "Ing_Hogar"
+names(survival)[names(survival)=="predicciones_raw_arbolSi"] <- "Exclusión"
+```
+
+```{r indicadores, include=FALSE}
+indicador <- DT::datatable(survival,
+              extensions = list('Scroller'=TRUE ,'FixedColumns'=NULL),
+              options = list(autowidth=T,pageLength=20,fixedHeader=T,scrollY=200,scrollX=200,searching = T,
+                                 fixedColumns=list(leftColumns=1) )) %>% formatPercentage(1:ncol(survival), 2) %>%
+              DT::formatStyle(columns = "Registro", backgroundColor = "#33aa3388") %>%
+              DT::formatStyle(columns = "Alimentacion", backgroundColor = "#F0E68C") %>%
+              DT::formatStyle(columns = "Cond_Vivienda", backgroundColor = "#F0E68C") %>%
+              DT::formatStyle(columns = "Ingresos", backgroundColor = "#F0E68C") %>%
+              DT::formatStyle(columns = "Hacinamiento", backgroundColor = "#F0E68C") %>%
+              DT::formatStyle(columns = "No_SGSS", backgroundColor = "#D1E5F0")%>%
+              DT::formatStyle(columns = "Control_Crec", backgroundColor = "#D1E5F0")%>%
+              DT::formatStyle(columns = "Estimulación", backgroundColor = "#E066FF")%>%
+              DT::formatStyle(columns = "Deporte", backgroundColor = "#E066FF")%>%
+              DT::formatStyle(columns = "Si_ICBF", backgroundColor = "#E066FF")%>%
+              DT::formatStyle(columns = "Fenomeno_Natu", backgroundColor = "#FF3030")%>%
+              DT::formatStyle(columns = "Exclusión")
+```
+
+De acuerdo con lo explicado anteriormente se presenta a continuación un resumen del escenario en donde se ve por departamentos cual es el porcentaje de hogares encuestados que cuentan o están en riesgo de exclusión social de acuerdo con las características del hogar encuestado.
+
+Se hace un resumen a su vez por cada una de las variables seleccionadas de acuerdo con sus características.
+
+```{r}
+indicador
+```
+
+__Mapa Geopolitico__
+A continuación se muestra uno de los mapa geopoliticos Colombianos creados en el software ArcMap 10.5 (ArcGIS), en el que se puede ver la distribución de la exclusión social por departamentos para Colombia y que haciendo una mirada critica se asemeja claramente a la realidad del país.
+(El resto de los mapas se podran ver en los anexos de la misma).
+
+```{r mapa, fig.align="center"}
+knitr::include_graphics('hogar_exclusion.PNG')
+```
+
+__Información sesión__
+
+```{r}
+sesion_info <- devtools::session_info()
+librerias <- dplyr::select(
+  tibble::as_tibble(sesion_info$packages),
+  c(package, loadedversion, source) )
+
+head(librerias)
+```
