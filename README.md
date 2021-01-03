@@ -22,4 +22,4 @@ __7. Analisis Cluster:__ Continuamos nuestro Analisis con los Datos Test, y conf
 
 __8. Indicador de Exclusión Social:__ Resumen del escenario en donde se ve por departamentos cual es el porcentaje de hogares encuestados que cuentan o están en riesgo de exclusión social de acuerdo con las características del hogar encuestado.
 
-![diagrama](https://github.com/betitajara0812/TFM/blob/main/diagrama.jpg)
+![diagrama](https://github.com/betitajara0812/TFM/blob/main/diagrama2.jpg)
