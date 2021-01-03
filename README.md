@@ -1,7 +1,9 @@
 # TFM: Indicador Social en la niñez Colombiana usando Machine Learning
 # Nombre Estudiante: Beatriz Elena Jaramillo Gallego
 
-![indicador](TFM/indicador.jpg)
+![indicador](https://github.com/betitajara0812/TFM/blob/main/indicador.jpg)
+
+
 El código generado para la realización de este trabajo final de master esta divido en 8 partes:
 
 __1. Data Set (ENCV-2018):__ El data set usado proviene de la Encuesta de Calidad de Vida (ECV) es una investigación que el DANE (Departamento Administrativo Nacional de Estadística) 
