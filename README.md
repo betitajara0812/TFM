@@ -4,7 +4,7 @@
 ![indicador](https://github.com/betitajara0812/TFM/blob/main/indicador.jpg)
 
 
-El código generado para la realización de este trabajo final de master esta divido en 8 partes, el cual se encuentra en el script Indicador_Exclusion_betitajara.Rmd:
+El código generado para la realización de este trabajo final de master esta divido en 8 partes, el cual se encuentra en el script llamado Indicador_Exclusion_betitajara.Rmd y se podra visualizar en ndicador_Exclusion_betitajara.html :
 
 __1. Data Set (ENCV-2018):__ El data set usado proviene de la Encuesta de Calidad de Vida (ECV) es una investigación que el DANE (Departamento Administrativo Nacional de Estadística) 
 
