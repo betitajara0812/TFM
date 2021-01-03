@@ -21,3 +21,5 @@ __6. Modelos:__ Se entrenan diferentes modelos de machine learning con el objeti
 __7. Analisis Cluster:__ Continuamos nuestro Analisis con los Datos Test, y confirmar que han sido bien clasificados deacuerdo con la realidad del pais (seleccionamos las predicciones del arbol simple).
 
 __8. Indicador de Exclusión Social:__ Resumen del escenario en donde se ve por departamentos cual es el porcentaje de hogares encuestados que cuentan o están en riesgo de exclusión social de acuerdo con las características del hogar encuestado.
+
+![diagrama](https://github.com/betitajara0812/TFM/blob/main/diagrama.jpg)
